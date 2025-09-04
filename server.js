@@ -82,7 +82,10 @@ app.get('/stream', (req, res) => {
     clients.delete(res);
   });
 });
-
+// 新增：处理所有/api开头的请求，统一返回{"received": true}
+app.use('/api/mock', (req, res) => {
+  res.json({ received: true });
+});
 // 测试端点 - 用于发送各种请求
 app.get('/api/test-get', (req, res) => {
   res.json({ message: 'This is a GET response', query: req.query });
