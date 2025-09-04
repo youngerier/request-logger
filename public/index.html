@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Request Logger Stream</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        danger: '#EF4444',
+                        warning: '#F59E0B',
+                        dark: '#1E293B',
+                        light: '#F8FAFC'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .request-card {
+                @apply bg-white rounded-lg shadow-md p-4 mb-4 transition-all duration-300 hover:shadow-lg;
+            }
+            .method-badge {
+                @apply px-2 py-1 rounded text-xs font-bold text-white;
+            }
+            .status-badge {
+                @apply px-2 py-1 rounded text-xs font-medium;
+            }
+            .log-container {
+                @apply max-h-[70vh] overflow-y-auto pr-2;
+            }
+            .fade-in {
+                animation: fadeIn 0.5s ease-in-out;
+            }
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 font-sans">
+    <header class="bg-primary text-white shadow-md">
+        <div class="container mx-auto px-4 py-6">
+            <h1 class="text-3xl font-bold flex items-center">
+                <i class="fa fa-server mr-3"></i>
+                Request Logger Stream
+            </h1>
+            <p class="text-blue-100 mt-2">Real-time visualization of all incoming requests</p>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8">
+        <div class="mb-6 flex flex-wrap gap-4 items-center justify-between">
+            <div>
+                <h2 class="text-2xl font-bold text-gray-800">Request Logs</h2>
+                <p class="text-gray-600 mt-1">Showing all incoming requests in real-time</p>
+            </div>
+            <div class="flex gap-2">
+                <button id="clearLogs"
+                    class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-md flex items-center transition-colors">
+                    <i class="fa fa-trash mr-2"></i> Clear Logs
+                </button>
+                <button id="testRequest"
+                    class="bg-secondary hover:bg-green-600 text-white px-4 py-2 rounded-md flex items-center transition-colors">
+                    <i class="fa fa-paper-plane mr-2"></i> Send Test Request
+                </button>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center">
+                    <div id="connectionStatus" class="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
+                    <span id="statusText" class="text-gray-600">Connecting to stream...</span>
+                </div>
+                <div class="text-sm text-gray-500">
+                    <span id="requestCount">0</span> requests received
+                </div>
+            </div>
+
+            <div id="logContainer" class="log-container">
+                <div class="text-center text-gray-500 py-10" id="initialMessage">
+                    <i class="fa fa-info-circle text-4xl mb-4 text-gray-300"></i>
+                    <p>Waiting for requests to come in...</p>
+                    <p class="mt-2 text-sm">Send a request to the server or use the "Send Test Request" button</p>
+                </div>
+                <!-- Logs will be added here dynamically -->
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-dark text-gray-300 py-6 mt-12">
+        <div class="container mx-auto px-4 text-center">
+            <p>Request Logger Stream &copy; 2023</p>
+        </div>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // DOM元素
+            const logContainer = document.getElementById('logContainer');
+            const initialMessage = document.getElementById('initialMessage');
+            const connectionStatus = document.getElementById('connectionStatus');
+            const statusText = document.getElementById('statusText');
+            const requestCount = document.getElementById('requestCount');
+            const clearLogsBtn = document.getElementById('clearLogs');
+            const testRequestBtn = document.getElementById('testRequest');
+
+            let count = 0;
+
+            // 建立SSE连接
+            let eventSource;
+            connectToStream();
+
+            function connectToStream() {
+                // 关闭现有连接
+                if (eventSource) {
+                    eventSource.close();
+                }
+
+                // 更新状态为连接中
+                connectionStatus.className = 'w-3 h-3 rounded-full bg-yellow-500 mr-2';
+                statusText.textContent = 'Connecting to stream...';
+
+                // 创建新的SSE连接
+                eventSource = new EventSource('/stream');
+
+                // 连接打开时
+                eventSource.onopen = () => {
+                    connectionStatus.className = 'w-3 h-3 rounded-full bg-green-500 mr-2';
+                    statusText.textContent = 'Connected to stream';
+                };
+
+                // 接收消息时
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+
+                        // 如果是历史数据
+                        if (data.type === 'history' && data.logs) {
+                            // 清空现有日志
+                            while (logContainer.children.length > 1) {
+                                logContainer.removeChild(logContainer.lastChild);
+                            }
+
+                            // 添加历史日志
+                            data.logs.forEach(log => {
+                                addRequestLog(log);
+                            });
+                        }
+                        // 如果是新请求
+                        else {
+                            addRequestLog(data);
+                        }
+                    } catch (error) {
+                        console.error('Error parsing SSE data:', error, event.data);
+                    }
+                };
+
+                // 发生错误时
+                eventSource.onerror = (error) => {
+                    console.error('SSE error:', error);
+                    connectionStatus.className = 'w-3 h-3 rounded-full bg-red-500 mr-2';
+                    statusText.textContent = 'Disconnected. Reconnecting...';
+
+                    // 尝试重新连接
+                    setTimeout(connectToStream, 3000);
+                };
+            }
+
+            // 添加请求日志到页面
+            function addRequestLog(log) {
+                // 隐藏初始消息
+                initialMessage.style.display = 'none';
+
+                // 增加计数
+                count++;
+                requestCount.textContent = count;
+
+                // 创建日志卡片
+                const logCard = document.createElement('div');
+                logCard.className = 'request-card fade-in';
+                logCard.dataset.id = log.id;
+
+                // 确定请求方法的样式
+                let methodClass = '';
+                switch (log.method) {
+                    case 'GET':
+                        methodClass = 'bg-blue-500';
+                        break;
+                    case 'POST':
+                        methodClass = 'bg-green-500';
+                        break;
+                    case 'PUT':
+                        methodClass = 'bg-yellow-500';
+                        break;
+                    case 'DELETE':
+                        methodClass = 'bg-red-500';
+                        break;
+                    default:
+                        methodClass = 'bg-gray-500';
+                }
+
+                // 确定状态码的样式
+                let statusClass = '';
+                if (log.statusCode) {
+                    if (log.statusCode >= 200 && log.statusCode < 300) {
+                        statusClass = 'bg-green-100 text-green-800';
+                    } else if (log.statusCode >= 300 && log.statusCode < 400) {
+                        statusClass = 'bg-blue-100 text-blue-800';
+                    } else if (log.statusCode >= 400 && log.statusCode < 500) {
+                        statusClass = 'bg-yellow-100 text-yellow-800';
+                    } else if (log.statusCode >= 500) {
+                        statusClass = 'bg-red-100 text-red-800';
+                    }
+                }
+
+                // 格式化时间
+                const date = new Date(log.timestamp);
+                const formattedTime = date.toLocaleTimeString();
+
+                // 构建卡片内容
+                logCard.innerHTML = `
+                    <div class="flex flex-wrap justify-between items-start gap-2 mb-3">
+                        <div class="flex items-center gap-3">
+                            <span class="method-badge ${methodClass}">${log.method}</span>
+                            <span class="font-medium text-gray-800">${log.url}</span>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            ${log.statusCode ? `<span class="status-badge ${statusClass}">${log.statusCode}</span>` : ''}
+                            <span class="text-sm text-gray-500">${formattedTime}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div>
+                            <p class="text-gray-600 mb-1"><strong class="text-gray-800">IP:</strong> ${log.ip}</p>
+                            <p class="text-gray-600 mb-1"><strong class="text-gray-800">Timestamp:</strong> ${log.timestamp}</p>
+                        </div>
+                        
+                        ${Object.keys(log.query).length > 0 ? `
+                        <div>
+                            <p class="text-gray-600 mb-1"><strong class="text-gray-800">Query Parameters:</strong></p>
+                            <pre class="bg-gray-50 p-2 rounded text-gray-700 overflow-x-auto max-h-20">${JSON.stringify(log.query, null, 2)}</pre>
+                        </div>
+                        ` : ''}
+                        
+                        ${Object.keys(log.body).length > 0 ? `
+                        <div class="md:col-span-2">
+                            <p class="text-gray-600 mb-1"><strong class="text-gray-800">Request Body:</strong></p>
+                            <pre class="bg-gray-50 p-2 rounded text-gray-700 overflow-x-auto max-h-32">${JSON.stringify(log.body, null, 2)}</pre>
+                        </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="mt-3">
+                        <button class="toggle-headers text-primary hover:text-primary/80 text-sm flex items-center" data-id="${log.id}">
+                            <i class="fa fa-chevron-down mr-1"></i> Show Headers
+                        </button>
+                        <div class="headers-content hidden mt-2 bg-gray-50 p-3 rounded text-sm overflow-x-auto max-h-40">
+                            <pre class="text-gray-700">${JSON.stringify(log.headers, null, 2)}</pre>
+                        </div>
+                    </div>
+                `;
+
+                // 添加到容器顶部
+                logContainer.insertBefore(logCard, logContainer.firstChild);
+
+                // 添加点击事件以显示/隐藏请求头
+                const toggleBtn = logCard.querySelector('.toggle-headers');
+                const headersContent = logCard.querySelector('.headers-content');
+
+                toggleBtn.addEventListener('click', () => {
+                    headersContent.classList.toggle('hidden');
+                    const icon = toggleBtn.querySelector('i');
+                    if (headersContent.classList.contains('hidden')) {
+                        toggleBtn.innerHTML = '<i class="fa fa-chevron-down mr-1"></i> Show Headers';
+                    } else {
+                        toggleBtn.innerHTML = '<i class="fa fa-chevron-up mr-1"></i> Hide Headers';
+                    }
+                });
+            }
+
+            // 清空日志按钮
+            clearLogsBtn.addEventListener('click', () => {
+                // 移除所有子元素
+                while (logContainer.firstChild) {
+                    logContainer.removeChild(logContainer.firstChild);
+                }
+
+                // 重置计数
+                count = 0;
+                requestCount.textContent = count;
+
+                // 可以选择添加一个"日志已清空"的提示
+                const emptyMessage = document.createElement('div');
+                emptyMessage.className = 'text-center text-gray-500 py-10';
+                emptyMessage.innerHTML = `
+        <i class="fa fa-check-circle text-4xl mb-4 text-green-300"></i>
+        <p>Logs have been cleared</p>
+    `;
+                logContainer.appendChild(emptyMessage);
+            });
+            // 发送测试请求按钮
+            testRequestBtn.addEventListener('click', async () => {
+                try {
+                    // 禁用按钮并显示加载状态
+                    testRequestBtn.disabled = true;
+                    testRequestBtn.innerHTML = '<i class="fa fa-spinner fa-spin mr-2"></i> Sending...';
+
+                    // 发送测试请求
+                    const response = await fetch('/api/test-post', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Test-Header': 'test-value'
+                        },
+                        body: JSON.stringify({
+                            test: 'This is a test request',
+                            timestamp: new Date().toISOString(),
+                            random: Math.random()
+                        })
+                    });
+
+                    const data = await response.json();
+                    console.log('Test request response:', data);
+
+                    // 恢复按钮状态
+                    testRequestBtn.disabled = false;
+                    testRequestBtn.innerHTML = '<i class="fa fa-paper-plane mr-2"></i> Send Test Request';
+
+                } catch (error) {
+                    console.error('Error sending test request:', error);
+
+                    // 恢复按钮状态
+                    testRequestBtn.disabled = false;
+                    testRequestBtn.innerHTML = '<i class="fa fa-paper-plane mr-2"></i> Send Test Request';
+                }
+            });
+
+            // 页面关闭时关闭SSE连接
+            window.addEventListener('beforeunload', () => {
+                if (eventSource) {
+                    eventSource.close();
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>
